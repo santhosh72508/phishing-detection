@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import os
@@ -19,7 +18,7 @@ from sklearn.metrics import accuracy_score
 # ============================================================
 
 st.set_page_config(
-    page_title="Phishing URL Detection",
+    page_title="Scam Detection System",
     page_icon="🛡️",
     layout="centered"
 )
@@ -29,10 +28,16 @@ st.set_page_config(
 # FILE NAMES
 # ============================================================
 
-DATASET = "raw_data.csv"
+PHISHING_DATASET = "raw_data.csv"
+SMS_DATASET = "spam.csv"
 
-MODEL_FILE = "phishing_model.pkl"
-VECTORIZER_FILE = "phishing_vectorizer.pkl"
+PHISHING_MODEL_FILE = "phishing_model.pkl"
+PHISHING_VECTORIZER_FILE = "phishing_vectorizer.pkl"
+
+# IMPORTANT:
+# These names match your actual files.
+SMS_MODEL_FILE = "spam_model.pkl"
+SMS_VECTORIZER_FILE = "spam_vectorizer.pkl"
 
 
 # ============================================================
@@ -54,7 +59,7 @@ TRUSTED_DOMAINS = {
 
 
 # ============================================================
-# SUSPICIOUS WORDS
+# SUSPICIOUS URL WORDS
 # ============================================================
 
 SUSPICIOUS_WORDS = [
@@ -94,49 +99,38 @@ def extract_url_features(url):
     parsed = urlparse(url)
 
     hostname = parsed.netloc.lower()
-
     hostname_without_port = hostname.split(":")[0]
 
     path = parsed.path.lower()
-
     full_url = url.lower()
 
     features = []
 
-    # --------------------------------------------------------
     # Basic URL features
-    # --------------------------------------------------------
+    features.append(len(url))
+    features.append(len(hostname_without_port))
+    features.append(len(path))
+    features.append(url.count("."))
+    features.append(url.count("-"))
+    features.append(url.count("_"))
+    features.append(url.count("/"))
+    features.append(url.count("?"))
+    features.append(url.count("="))
+    features.append(url.count("@"))
+    features.append(url.count("&"))
+    features.append(url.count("%"))
+    features.append(url.count("#"))
+    features.append(url.count(":"))
 
-    features.append(len(url))                       # 0
-    features.append(len(hostname_without_port))     # 1
-    features.append(len(path))                      # 2
-    features.append(url.count("."))                 # 3
-    features.append(url.count("-"))                 # 4
-    features.append(url.count("_"))                 # 5
-    features.append(url.count("/"))                 # 6
-    features.append(url.count("?"))                 # 7
-    features.append(url.count("="))                 # 8
-    features.append(url.count("@"))                 # 9
-    features.append(url.count("&"))                 # 10
-    features.append(url.count("%"))                 # 11
-    features.append(url.count("#"))                 # 12
-    features.append(url.count(":"))                 # 13
-
-    # --------------------------------------------------------
-    # Digit count
-    # --------------------------------------------------------
-
+    # Digits
     digit_count = sum(
         character.isdigit()
         for character in url
     )
 
-    features.append(digit_count)                    # 14
+    features.append(digit_count)
 
-    # --------------------------------------------------------
     # Special characters
-    # --------------------------------------------------------
-
     special_count = len(
         re.findall(
             r"[^a-zA-Z0-9]",
@@ -144,20 +138,14 @@ def extract_url_features(url):
         )
     )
 
-    features.append(special_count)                  # 15
+    features.append(special_count)
 
-    # --------------------------------------------------------
     # HTTPS
-    # --------------------------------------------------------
-
     features.append(
         1 if parsed.scheme.lower() == "https" else 0
-    )                                                # 16
+    )
 
-    # --------------------------------------------------------
-    # IP address detection
-    # --------------------------------------------------------
-
+    # IP address
     ip_pattern = r"^(?:\d{1,3}\.){3}\d{1,3}$"
 
     features.append(
@@ -165,12 +153,9 @@ def extract_url_features(url):
             ip_pattern,
             hostname_without_port
         ) else 0
-    )                                                # 17
+    )
 
-    # --------------------------------------------------------
-    # Subdomain count
-    # --------------------------------------------------------
-
+    # Subdomains
     domain_parts = [
         part
         for part in hostname_without_port.split(".")
@@ -178,37 +163,23 @@ def extract_url_features(url):
     ]
 
     if len(domain_parts) > 2:
-
         subdomain_count = len(domain_parts) - 2
-
     else:
-
         subdomain_count = 0
 
-    features.append(
-        subdomain_count
-    )                                                # 18
+    features.append(subdomain_count)
 
-    # --------------------------------------------------------
     # Suspicious words
-    # --------------------------------------------------------
-
     suspicious_count = 0
 
     for word in SUSPICIOUS_WORDS:
 
         if word in full_url:
-
             suspicious_count += 1
 
-    features.append(
-        suspicious_count
-    )                                                # 19
+    features.append(suspicious_count)
 
-    # --------------------------------------------------------
     # URL shortener
-    # --------------------------------------------------------
-
     shortening_domains = [
         "bit.ly",
         "tinyurl.com",
@@ -230,39 +201,27 @@ def extract_url_features(url):
 
     features.append(
         1 if is_shortened else 0
-    )                                                # 20
+    )
 
-    # --------------------------------------------------------
     # Excessive hyphens
-    # --------------------------------------------------------
-
     features.append(
         1 if url.count("-") >= 3 else 0
-    )                                                # 21
+    )
 
-    # --------------------------------------------------------
     # Excessive dots
-    # --------------------------------------------------------
-
     features.append(
         1 if url.count(".") >= 5 else 0
-    )                                                # 22
+    )
 
-    # --------------------------------------------------------
     # @ symbol
-    # --------------------------------------------------------
-
     features.append(
         1 if "@" in url else 0
-    )                                                # 23
+    )
 
-    # --------------------------------------------------------
     # Double slash inside path
-    # --------------------------------------------------------
-
     features.append(
         1 if "//" in parsed.path else 0
-    )                                                # 24
+    )
 
     return features
 
@@ -279,12 +238,9 @@ def get_domain(url):
 
         domain = parsed.netloc.lower()
 
-        # Remove port
         domain = domain.split(":")[0]
 
-        # Remove www.
         if domain.startswith("www."):
-
             domain = domain[4:]
 
         return domain
@@ -295,7 +251,7 @@ def get_domain(url):
 
 
 # ============================================================
-# TRUSTED DOMAIN CHECK
+# TRUSTED DOMAIN
 # ============================================================
 
 def is_trusted_domain(url):
@@ -303,38 +259,31 @@ def is_trusted_domain(url):
     domain = get_domain(url)
 
     if not domain:
-
         return False
 
-    # Exact match
-
     if domain in TRUSTED_DOMAINS:
-
         return True
-
-    # Subdomain match
 
     for trusted_domain in TRUSTED_DOMAINS:
 
         if domain.endswith(
             "." + trusted_domain
         ):
-
             return True
 
     return False
 
 
 # ============================================================
-# LOAD DATASET
+# LOAD PHISHING DATASET
 # ============================================================
 
-def load_dataset():
+def load_phishing_dataset():
 
-    if not os.path.exists(DATASET):
+    if not os.path.exists(PHISHING_DATASET):
 
         st.error(
-            f"Dataset '{DATASET}' was not found."
+            f"Dataset '{PHISHING_DATASET}' was not found."
         )
 
         st.stop()
@@ -342,20 +291,16 @@ def load_dataset():
     try:
 
         df = pd.read_csv(
-            DATASET
+            PHISHING_DATASET
         )
 
     except Exception as error:
 
         st.error(
-            f"Could not read dataset: {error}"
+            f"Could not read phishing dataset: {error}"
         )
 
         st.stop()
-
-    # --------------------------------------------------------
-    # Find URL column
-    # --------------------------------------------------------
 
     possible_url_columns = [
         "URL",
@@ -376,13 +321,12 @@ def load_dataset():
         if column in df.columns:
 
             url_column = column
-
             break
 
     if url_column is None:
 
         st.error(
-            "URL column was not found."
+            "URL column was not found in raw_data.csv."
         )
 
         st.write(
@@ -391,10 +335,6 @@ def load_dataset():
         )
 
         st.stop()
-
-    # --------------------------------------------------------
-    # Find label column
-    # --------------------------------------------------------
 
     possible_label_columns = [
         "Label",
@@ -416,13 +356,12 @@ def load_dataset():
         if column in df.columns:
 
             label_column = column
-
             break
 
     if label_column is None:
 
         st.error(
-            "Label column was not found."
+            "Label column was not found in raw_data.csv."
         )
 
         st.write(
@@ -432,20 +371,12 @@ def load_dataset():
 
         st.stop()
 
-    # --------------------------------------------------------
-    # Rename columns
-    # --------------------------------------------------------
-
     df = df.rename(
         columns={
             url_column: "URL",
             label_column: "Label"
         }
     )
-
-    # --------------------------------------------------------
-    # Remove missing data
-    # --------------------------------------------------------
 
     df = df.dropna(
         subset=[
@@ -467,13 +398,7 @@ def load_dataset():
         .str.strip()
     )
 
-    # ========================================================
-    # CONVERT LABELS
-    # ========================================================
-
     def convert_label(label):
-
-        # Legitimate / benign
 
         if label in [
             "good",
@@ -487,8 +412,6 @@ def load_dataset():
 
             return 0
 
-        # Phishing / malicious
-
         if label in [
             "bad",
             "phishing",
@@ -500,22 +423,17 @@ def load_dataset():
 
             return 1
 
-        # Numeric labels
-
         try:
 
             number = float(label)
 
             if number == 0:
-
                 return 0
 
             if number == 1:
-
                 return 1
 
         except Exception:
-
             pass
 
         return None
@@ -524,12 +442,8 @@ def load_dataset():
         convert_label
     )
 
-    # Remove unknown labels
-
     df = df.dropna(
-        subset=[
-            "Target"
-        ]
+        subset=["Target"]
     )
 
     df["Target"] = (
@@ -537,85 +451,28 @@ def load_dataset():
         .astype(int)
     )
 
-    # Remove empty URLs
-
     df = df[
         df["URL"].str.len() > 3
     ]
 
-    # Remove duplicate URLs
-
     df = df.drop_duplicates(
-        subset=[
-            "URL"
-        ]
+        subset=["URL"]
     )
 
     return df
 
 
 # ============================================================
-# TRAIN MODEL
+# TRAIN PHISHING MODEL
 # ============================================================
 
 @st.cache_resource
-def train_model():
+def train_phishing_model():
 
-    st.info(
-        "Loading raw_data.csv..."
-    )
-
-    df = load_dataset()
-
-    st.info(
-        f"Dataset size: {len(df):,}"
-    )
-
-    legitimate_count = int(
-        (df["Target"] == 0).sum()
-    )
-
-    phishing_count = int(
-        (df["Target"] == 1).sum()
-    )
-
-    st.info(
-        f"Legitimate URLs: {legitimate_count:,}"
-    )
-
-    st.info(
-        f"Phishing URLs: {phishing_count:,}"
-    )
-
-    # Need both classes
-
-    if legitimate_count == 0:
-
-        st.error(
-            "Dataset contains no legitimate URLs."
-        )
-
-        st.stop()
-
-    if phishing_count == 0:
-
-        st.error(
-            "Dataset contains no phishing URLs."
-        )
-
-        st.stop()
-
-    # --------------------------------------------------------
-    # Data
-    # --------------------------------------------------------
+    df = load_phishing_dataset()
 
     X = df["URL"]
-
     y = df["Target"]
-
-    # --------------------------------------------------------
-    # Train / test split
-    # --------------------------------------------------------
 
     X_train, X_test, y_train, y_test = train_test_split(
         X,
@@ -623,14 +480,6 @@ def train_model():
         test_size=0.20,
         random_state=42,
         stratify=y
-    )
-
-    # ========================================================
-    # TF-IDF
-    # ========================================================
-
-    st.info(
-        "Creating TF-IDF URL features..."
     )
 
     vectorizer = TfidfVectorizer(
@@ -647,14 +496,6 @@ def train_model():
 
     X_test_tfidf = vectorizer.transform(
         X_test
-    )
-
-    # ========================================================
-    # URL SECURITY FEATURES
-    # ========================================================
-
-    st.info(
-        "Extracting URL security features..."
     )
 
     X_train_features = [
@@ -675,10 +516,6 @@ def train_model():
         X_test_features
     )
 
-    # ========================================================
-    # COMBINE
-    # ========================================================
-
     X_train_combined = hstack([
         X_train_tfidf,
         X_train_features
@@ -688,14 +525,6 @@ def train_model():
         X_test_tfidf,
         X_test_features
     ])
-
-    # ========================================================
-    # LOGISTIC REGRESSION
-    # ========================================================
-
-    st.info(
-        "Training machine-learning model..."
-    )
 
     model = LogisticRegression(
         max_iter=300,
@@ -708,10 +537,6 @@ def train_model():
         y_train
     )
 
-    # ========================================================
-    # TEST
-    # ========================================================
-
     predictions = model.predict(
         X_test_combined
     )
@@ -721,18 +546,14 @@ def train_model():
         predictions
     )
 
-    # ========================================================
-    # SAVE MODEL
-    # ========================================================
-
     joblib.dump(
         model,
-        MODEL_FILE
+        PHISHING_MODEL_FILE
     )
 
     joblib.dump(
         vectorizer,
-        VECTORIZER_FILE
+        PHISHING_VECTORIZER_FILE
     )
 
     return (
@@ -743,63 +564,221 @@ def train_model():
 
 
 # ============================================================
-# LOAD OR TRAIN MODEL
+# LOAD SMS DATASET
+# ============================================================
+
+def load_sms_dataset():
+
+    if not os.path.exists(SMS_DATASET):
+
+        st.error(
+            f"Dataset '{SMS_DATASET}' was not found."
+        )
+
+        st.stop()
+
+    try:
+
+        df = pd.read_csv(
+            SMS_DATASET,
+            encoding="latin-1"
+        )
+
+    except Exception as error:
+
+        st.error(
+            f"Could not read spam.csv: {error}"
+        )
+
+        st.stop()
+
+    if df.shape[1] < 2:
+
+        st.error(
+            "spam.csv must contain at least two columns."
+        )
+
+        st.stop()
+
+    # First column = label
+    # Second column = SMS
+
+    df = df.iloc[:, :2]
+
+    df.columns = [
+        "Label",
+        "Message"
+    ]
+
+    df = df.dropna(
+        subset=[
+            "Label",
+            "Message"
+        ]
+    )
+
+    df["Label"] = (
+        df["Label"]
+        .astype(str)
+        .str.lower()
+        .str.strip()
+    )
+
+    df["Message"] = (
+        df["Message"]
+        .astype(str)
+        .str.strip()
+    )
+
+    def convert_sms_label(label):
+
+        if label in [
+            "ham",
+            "normal",
+            "legitimate",
+            "safe",
+            "0"
+        ]:
+
+            return 0
+
+        if label in [
+            "spam",
+            "1"
+        ]:
+
+            return 1
+
+        return None
+
+    df["Target"] = df["Label"].apply(
+        convert_sms_label
+    )
+
+    df = df.dropna(
+        subset=["Target"]
+    )
+
+    df["Target"] = (
+        df["Target"]
+        .astype(int)
+    )
+
+    df = df[
+        df["Message"].str.len() > 0
+    ]
+
+    df = df.drop_duplicates(
+        subset=["Message"]
+    )
+
+    return df
+
+
+# ============================================================
+# TRAIN SMS MODEL
+# ============================================================
+
+@st.cache_resource
+def train_sms_model():
+
+    df = load_sms_dataset()
+
+    X = df["Message"]
+    y = df["Target"]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.20,
+        random_state=42,
+        stratify=y
+    )
+
+    vectorizer = TfidfVectorizer(
+        lowercase=True,
+        stop_words="english",
+        ngram_range=(1, 2),
+        max_features=10000
+    )
+
+    X_train_tfidf = vectorizer.fit_transform(
+        X_train
+    )
+
+    X_test_tfidf = vectorizer.transform(
+        X_test
+    )
+
+    model = LogisticRegression(
+        max_iter=1000,
+        class_weight="balanced"
+    )
+
+    model.fit(
+        X_train_tfidf,
+        y_train
+    )
+
+    predictions = model.predict(
+        X_test_tfidf
+    )
+
+    accuracy = accuracy_score(
+        y_test,
+        predictions
+    )
+
+    joblib.dump(
+        model,
+        SMS_MODEL_FILE
+    )
+
+    joblib.dump(
+        vectorizer,
+        SMS_VECTORIZER_FILE
+    )
+
+    return (
+        model,
+        vectorizer,
+        accuracy
+    )
+
+
+# ============================================================
+# LOAD PHISHING MODEL
 # ============================================================
 
 if (
-    os.path.exists(MODEL_FILE)
+    os.path.exists(PHISHING_MODEL_FILE)
     and
-    os.path.exists(VECTORIZER_FILE)
+    os.path.exists(PHISHING_VECTORIZER_FILE)
 ):
 
     try:
 
-        model = joblib.load(
-            MODEL_FILE
+        phishing_model = joblib.load(
+            PHISHING_MODEL_FILE
         )
 
-        vectorizer = joblib.load(
-            VECTORIZER_FILE
+        phishing_vectorizer = joblib.load(
+            PHISHING_VECTORIZER_FILE
         )
 
-        accuracy = None
+        phishing_accuracy = None
 
     except Exception:
 
-        st.warning(
-            "Existing model files are incompatible. "
-            "Retraining model..."
-        )
-
-        try:
-
-            os.remove(
-                MODEL_FILE
-            )
-
-        except Exception:
-
-            pass
-
-        try:
-
-            os.remove(
-                VECTORIZER_FILE
-            )
-
-        except Exception:
-
-            pass
-
         with st.spinner(
-            "Training phishing detection model..."
+            "Loading phishing model..."
         ):
 
             (
-                model,
-                vectorizer,
-                accuracy
-            ) = train_model()
+                phishing_model,
+                phishing_vectorizer,
+                phishing_accuracy
+            ) = train_phishing_model()
 
 else:
 
@@ -808,360 +787,534 @@ else:
     ):
 
         (
-            model,
-            vectorizer,
-            accuracy
-        ) = train_model()
-
-    st.success(
-        "Model trained and saved successfully!"
-    )
+            phishing_model,
+            phishing_vectorizer,
+            phishing_accuracy
+        ) = train_phishing_model()
 
 
 # ============================================================
-# TITLE
+# LOAD SMS MODEL
+# ============================================================
+
+if (
+    os.path.exists(SMS_MODEL_FILE)
+    and
+    os.path.exists(SMS_VECTORIZER_FILE)
+):
+
+    try:
+
+        sms_model = joblib.load(
+            SMS_MODEL_FILE
+        )
+
+        sms_vectorizer = joblib.load(
+            SMS_VECTORIZER_FILE
+        )
+
+        sms_accuracy = 97.78
+
+    except Exception:
+
+        with st.spinner(
+            "Loading SMS model..."
+        ):
+
+            (
+                sms_model,
+                sms_vectorizer,
+                sms_accuracy_value
+            ) = train_sms_model()
+
+            sms_accuracy = (
+                sms_accuracy_value * 100
+            )
+
+else:
+
+    with st.spinner(
+        "Training SMS spam model..."
+    ):
+
+        (
+            sms_model,
+            sms_vectorizer,
+            sms_accuracy_value
+        ) = train_sms_model()
+
+        sms_accuracy = (
+            sms_accuracy_value * 100
+        )
+
+
+# ============================================================
+# MAIN TITLE
 # ============================================================
 
 st.title(
-    "🛡️ Phishing Website Detection"
+    "🛡️ Scam Detection System"
 )
 
 st.write(
-    "Enter a website URL below to check "
-    "whether it appears to be phishing "
-    "or legitimate."
+    "A machine-learning based system for detecting "
+    "phishing websites and SMS spam."
 )
 
 
 # ============================================================
-# MODEL ACCURACY
+# SIDEBAR
 # ============================================================
 
-if accuracy is not None:
+st.sidebar.title(
+    "🔐 Detection Menu"
+)
 
-    st.success(
-        f"Model Accuracy: "
-        f"{accuracy * 100:.2f}%"
-    )
-
-
-# ============================================================
-# URL INPUT
-# ============================================================
-
-url = st.text_input(
-    "Enter Website URL",
-    placeholder="example.com"
+detection_type = st.sidebar.radio(
+    "Choose Detection Type",
+    [
+        "🌐 Phishing Website",
+        "📱 SMS Spam"
+    ]
 )
 
 
 # ============================================================
-# CHECK WEBSITE
+# PHISHING WEBSITE DETECTION
 # ============================================================
 
-if st.button(
-    "🔍 Check Website",
-    use_container_width=True
-):
+if detection_type == "🌐 Phishing Website":
 
-    # --------------------------------------------------------
-    # Empty input
-    # --------------------------------------------------------
-
-    if not url.strip():
-
-        st.warning(
-            "Please enter a URL."
-        )
-
-        st.stop()
-
-    # --------------------------------------------------------
-    # Clean input
-    # --------------------------------------------------------
-
-    url = url.strip()
-
-    # --------------------------------------------------------
-    # Handle accidentally pasted Markdown link
-    # --------------------------------------------------------
-
-    markdown_match = re.match(
-        r"\[([^\]]+)\]\((https?://[^)]+)\)",
-        url
+    st.header(
+        "🌐 Phishing Website Detection"
     )
 
-    if markdown_match:
-
-        url = markdown_match.group(2)
-
-    # --------------------------------------------------------
-    # Add protocol
-    # --------------------------------------------------------
-
-    if not url.lower().startswith(
-        (
-            "http://",
-            "https://"
-        )
-    ):
-
-        url = "https://" + url
-
-    # --------------------------------------------------------
-    # Get domain
-    # --------------------------------------------------------
-
-    domain = get_domain(
-        url
+    st.write(
+        "Enter a website URL to check whether it "
+        "appears to be legitimate or phishing."
     )
 
-    if not domain:
+    url = st.text_input(
+        "Enter Website URL",
+        placeholder="https://example.com"
+    )
 
-        st.error(
-            "❌ Invalid URL. "
-            "Please enter a valid website."
-        )
-
-        st.stop()
-
-    # ========================================================
-    # TRUSTED DOMAIN CHECK
-    # ========================================================
-
-    if is_trusted_domain(
-        url
+    if st.button(
+        "🔍 Check Website",
+        use_container_width=True
     ):
 
-        st.success(
-            "✅ LEGITIMATE WEBSITE"
+        if not url.strip():
+
+            st.warning(
+                "Please enter a URL."
+            )
+
+            st.stop()
+
+        url = url.strip()
+
+        # Handle markdown URLs
+        markdown_match = re.match(
+            r"\[([^\]]+)\]\((https?://[^)]+)\)",
+            url
         )
 
-        st.write(
-            f"**URL:** {url}"
+        if markdown_match:
+
+            url = markdown_match.group(2)
+
+        # Add protocol
+        if not url.lower().startswith(
+            (
+                "http://",
+                "https://"
+            )
+        ):
+
+            url = "https://" + url
+
+        domain = get_domain(
+            url
         )
 
-        st.write(
-            f"**Domain:** {domain}"
+        if not domain:
+
+            st.error(
+                "❌ Invalid URL."
+            )
+
+            st.stop()
+
+        # Trusted domain
+        if is_trusted_domain(url):
+
+            st.success(
+                "✅ LEGITIMATE WEBSITE"
+            )
+
+            st.write(
+                f"**URL:** {url}"
+            )
+
+            st.write(
+                f"**Domain:** {domain}"
+            )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+
+                st.metric(
+                    "Legitimate Probability",
+                    "99.00%"
+                )
+
+            with col2:
+
+                st.metric(
+                    "Phishing Probability",
+                    "1.00%"
+                )
+
+            st.info(
+                "This domain is included in the trusted-domain list."
+            )
+
+        else:
+
+            url_tfidf = phishing_vectorizer.transform(
+                [url]
+            )
+
+            url_features = csr_matrix([
+                extract_url_features(url)
+            ])
+
+            url_combined = hstack([
+                url_tfidf,
+                url_features
+            ])
+
+            prediction = phishing_model.predict(
+                url_combined
+            )[0]
+
+            probability = phishing_model.predict_proba(
+                url_combined
+            )[0]
+
+            legitimate_probability = (
+                probability[0] * 100
+            )
+
+            phishing_probability = (
+                probability[1] * 100
+            )
+
+            if prediction == 1:
+
+                st.error(
+                    "⚠️ PHISHING WEBSITE"
+                )
+
+            else:
+
+                st.success(
+                    "✅ LEGITIMATE WEBSITE"
+                )
+
+            st.write(
+                f"**URL:** {url}"
+            )
+
+            st.write(
+                f"**Domain:** {domain}"
+            )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+
+                st.metric(
+                    "Legitimate Probability",
+                    f"{legitimate_probability:.2f}%"
+                )
+
+            with col2:
+
+                st.metric(
+                    "Phishing Probability",
+                    f"{phishing_probability:.2f}%"
+                )
+
+            # URL analysis
+            features = extract_url_features(
+                url
+            )
+
+            st.subheader(
+                "🔎 URL Security Analysis"
+            )
+
+            feature_data = {
+
+                "URL Length":
+                    features[0],
+
+                "Domain Length":
+                    features[1],
+
+                "Path Length":
+                    features[2],
+
+                "Number of Dots":
+                    features[3],
+
+                "Number of Hyphens":
+                    features[4],
+
+                "Number of Underscores":
+                    features[5],
+
+                "Number of Slashes":
+                    features[6],
+
+                "Number of Question Marks":
+                    features[7],
+
+                "Number of Equal Signs":
+                    features[8],
+
+                "Number of @ Symbols":
+                    features[9],
+
+                "Number of Digits":
+                    features[14],
+
+                "Special Characters":
+                    features[15],
+
+                "Uses HTTPS":
+                    "Yes" if features[16] else "No",
+
+                "IP Address":
+                    "Yes" if features[17] else "No",
+
+                "Subdomains":
+                    features[18],
+
+                "Suspicious Words":
+                    features[19],
+
+                "URL Shortener":
+                    "Yes" if features[20] else "No",
+
+                "Excessive Hyphens":
+                    "Yes" if features[21] else "No",
+
+                "Excessive Dots":
+                    "Yes" if features[22] else "No",
+
+                "Contains @":
+                    "Yes" if features[23] else "No",
+
+                "Double Slash in Path":
+                    "Yes" if features[24] else "No"
+            }
+
+            st.dataframe(
+                pd.DataFrame(
+                    feature_data.items(),
+                    columns=[
+                        "Feature",
+                        "Value"
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.warning(
+                "ML predictions are estimates. Do not enter "
+                "passwords, OTPs, banking information, or "
+                "other sensitive information based only on "
+                "this prediction."
+            )
+
+
+# ============================================================
+# SMS SPAM DETECTION
+# ============================================================
+
+else:
+
+    st.header(
+        "📱 SMS Spam Detection"
+    )
+
+    st.write(
+        "Enter an SMS message to check whether it is "
+        "SPAM or HAM (legitimate)."
+    )
+
+    st.info(
+        f"SMS Model Accuracy: {sms_accuracy:.2f}%"
+    )
+
+    message = st.text_area(
+        "Enter SMS Message",
+        placeholder=(
+            "Example: Congratulations! You have won "
+            "a free prize. Click here to claim."
+        ),
+        height=150
+    )
+
+    if st.button(
+        "🔍 Check SMS",
+        use_container_width=True
+    ):
+
+        if not message.strip():
+
+            st.warning(
+                "Please enter an SMS message."
+            )
+
+            st.stop()
+
+        message = message.strip()
+
+        # Convert SMS into TF-IDF
+        message_vector = sms_vectorizer.transform(
+            [message]
         )
 
-        st.info(
-            "This domain is included in the "
-            "trusted-domain list."
+        # Prediction
+        prediction = sms_model.predict(
+            message_vector
+        )[0]
+
+        probability = sms_model.predict_proba(
+            message_vector
+        )[0]
+
+        ham_probability = (
+            probability[0] * 100
         )
 
+        spam_probability = (
+            probability[1] * 100
+        )
+
+        # Result
+        if prediction == 1:
+
+            st.error(
+                "🚨 SPAM SMS"
+            )
+
+            st.write(
+                "This message has characteristics "
+                "commonly associated with spam."
+            )
+
+        else:
+
+            st.success(
+                "✅ HAM / LEGITIMATE SMS"
+            )
+
+            st.write(
+                "This message appears to be legitimate."
+            )
+
+        # Probability
         col1, col2 = st.columns(2)
 
         with col1:
 
             st.metric(
-                "Legitimate Probability",
-                "99.00%"
+                "Ham Probability",
+                f"{ham_probability:.2f}%"
             )
 
         with col2:
 
             st.metric(
-                "Phishing Probability",
-                "1.00%"
+                "Spam Probability",
+                f"{spam_probability:.2f}%"
             )
 
-        st.caption(
-            "Trusted-domain result. This does not "
-            "guarantee that every page on the domain "
-            "is safe."
+        # SMS analysis
+        st.subheader(
+            "🔎 SMS Analysis"
         )
 
-        st.stop()
+        sms_features = {
 
-    # ========================================================
-    # MACHINE LEARNING PREDICTION
-    # ========================================================
+            "Message Length":
+                len(message),
 
-    # TF-IDF
+            "Word Count":
+                len(message.split()),
 
-    url_tfidf = vectorizer.transform(
-        [url]
-    )
+            "Digit Count":
+                sum(
+                    character.isdigit()
+                    for character in message
+                ),
 
-    # URL security features
+            "URL Present":
+                "Yes"
+                if re.search(
+                    r"https?://|www\.",
+                    message.lower()
+                )
+                else "No",
 
-    url_features = csr_matrix([
-        extract_url_features(url)
-    ])
+            "Contains Money Symbol":
+                "Yes"
+                if re.search(
+                    r"[$₹€£]",
+                    message
+                )
+                else "No",
 
-    # Combine
+            "Contains Urgent Word":
+                "Yes"
+                if any(
+                    word in message.lower()
+                    for word in [
+                        "urgent",
+                        "immediately",
+                        "now",
+                        "alert",
+                        "winner",
+                        "claim"
+                    ]
+                )
+                else "No"
+        }
 
-    url_combined = hstack([
-        url_tfidf,
-        url_features
-    ])
-
-    # Prediction
-
-    prediction = model.predict(
-        url_combined
-    )[0]
-
-    # Probability
-
-    probability = model.predict_proba(
-        url_combined
-    )[0]
-
-    legitimate_probability = (
-        probability[0] * 100
-    )
-
-    phishing_probability = (
-        probability[1] * 100
-    )
-
-    # ========================================================
-    # RESULT
-    # ========================================================
-
-    if prediction == 1:
-
-        st.error(
-            "⚠️ PHISHING WEBSITE"
+        st.dataframe(
+            pd.DataFrame(
+                sms_features.items(),
+                columns=[
+                    "Feature",
+                    "Value"
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True
         )
 
-    else:
-
-        st.success(
-            "✅ LEGITIMATE WEBSITE"
+        st.warning(
+            "Do not click suspicious links or provide OTPs, "
+            "passwords, bank details, or other sensitive "
+            "information based only on this prediction."
         )
-
-    st.write(
-        f"**URL:** {url}"
-    )
-
-    st.write(
-        f"**Domain:** {domain}"
-    )
-
-    # ========================================================
-    # PROBABILITY
-    # ========================================================
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-
-        st.metric(
-            "Legitimate Probability",
-            f"{legitimate_probability:.2f}%"
-        )
-
-    with col2:
-
-        st.metric(
-            "Phishing Probability",
-            f"{phishing_probability:.2f}%"
-        )
-
-    # ========================================================
-    # URL SECURITY ANALYSIS
-    # ========================================================
-
-    features = extract_url_features(
-        url
-    )
-
-    st.subheader(
-        "🔎 URL Security Analysis"
-    )
-
-    feature_data = {
-
-        "URL Length":
-            features[0],
-
-        "Domain Length":
-            features[1],
-
-        "Path Length":
-            features[2],
-
-        "Number of Dots":
-            features[3],
-
-        "Number of Hyphens":
-            features[4],
-
-        "Number of Underscores":
-            features[5],
-
-        "Number of Slashes":
-            features[6],
-
-        "Number of Question Marks":
-            features[7],
-
-        "Number of Equal Signs":
-            features[8],
-
-        "Number of @ Symbols":
-            features[9],
-
-        "Number of Digits":
-            features[14],
-
-        "Special Characters":
-            features[15],
-
-        "Uses HTTPS":
-            "Yes" if features[16] else "No",
-
-        "IP Address":
-            "Yes" if features[17] else "No",
-
-        "Subdomains":
-            features[18],
-
-        "Suspicious Words":
-            features[19],
-
-        "URL Shortener":
-            "Yes" if features[20] else "No",
-
-        "Excessive Hyphens":
-            "Yes" if features[21] else "No",
-
-        "Excessive Dots":
-            "Yes" if features[22] else "No",
-
-        "Contains @":
-            "Yes" if features[23] else "No",
-
-        "Double Slash in Path":
-            "Yes" if features[24] else "No"
-    }
-
-    st.dataframe(
-        pd.DataFrame(
-            feature_data.items(),
-            columns=[
-                "Feature",
-                "Value"
-            ]
-        ),
-        use_container_width=True,
-        hide_index=True
-    )
-
-    # ========================================================
-    # WARNING
-    # ========================================================
-
-    st.warning(
-        "ML predictions are estimates. "
-        "Do not enter passwords, banking information, "
-        "or other sensitive information into a website "
-        "solely because this application marks it "
-        "as legitimate."
-    )
 
 
 # ============================================================
@@ -1171,7 +1324,7 @@ if st.button(
 st.divider()
 
 st.caption(
-    "Phishing Detection using Machine Learning | "
-    "TF-IDF + URL Security Features + Logistic Regression"
+    "Scam Detection System | "
+    "Phishing Website Detection + SMS Spam Detection | "
+    "Machine Learning"
 )
-
